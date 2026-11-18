@@ -1,4 +1,5 @@
 import * as store from './store.js';
+import * as sync from './sync.js';
 import { MODULES, moduleById } from './modules/index.js';
 import { renderNotes } from './notation.js';
 import { unlock, blip, stopAll, preloadAll, playMelodic } from './audio.js';
@@ -109,6 +110,7 @@ function renderToday() {
     <header class="page-head">
       <p class="eyebrow">${new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
       <h1>${greeting()}!</h1>
+      ${sync.isConnected() ? `<a class="sync-pill ${sync.getStatus().state}" href="#/einstellungen">${sync.getStatus().state === 'error' ? 'Abgleich hakt' : `Synchronisiert · ${store.otherDevices().length + 1} ${store.otherDevices().length ? 'Geräte' : 'Gerät'}`}</a>` : ''}
     </header>
     <section class="hero card">
       <div class="streak ${store.goalMet(store.todayKey()) ? 'lit' : ''}">
@@ -681,20 +683,23 @@ function renderSettings() {
       <button class="btn ghost" id="mic-test">${icon('mic')} Mikrofon testen</button>
       <p class="muted small" id="mic-out"></p>
     </section>
+    <section class="card form" id="sync-sec"></section>
     <section class="card form">
       <h2>Daten</h2>
-      <p class="muted small">Dein Fortschritt wird nur auf diesem Gerät gespeichert. Mit einer Sicherung kannst du ihn auf ein anderes Gerät übertragen.</p>
+      <p class="muted small">Eine Sicherungsdatei enthält den Fortschritt dieses Geräts.</p>
       <div class="row-btns">
         <button class="btn ghost" id="export">Sicherung speichern</button>
         <label class="btn ghost file">Sicherung laden<input type="file" accept="application/json,.json" id="import" hidden></label>
       </div>
       <button class="btn danger" id="reset">Alles zurücksetzen</button>
+      <p class="muted small">Zurücksetzen löscht den Fortschritt auf allen synchronisierten Geräten.</p>
     </section>
     <section class="card">
       <h2>Über</h2>
       <p class="muted small">Gehörbildungstrainer, Version ${window.GBT_VERSION}. Klavierklang: Salamander Grand Piano von Alexander Holm (CC BY 3.0). Notensatz: VexFlow (MIT).</p>
     </section>
   `;
+  renderSyncSection($app.querySelector('#sync-sec'));
   $app.querySelectorAll('.seg[data-key]').forEach((seg) => {
     const key = seg.dataset.key;
     seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', (e) => {
@@ -732,7 +737,8 @@ function renderSettings() {
     out.textContent = 'Sing einen Ton …';
     loop();
   });
-  cleanup = () => { if (testing) cancelAnimationFrame(testing); stopMic(); };
+  const offSync = sync.onStatus(() => renderSyncSection($app.querySelector('#sync-sec')));
+  cleanup = () => { if (testing) cancelAnimationFrame(testing); stopMic(); offSync(); };
   $app.querySelector('#export').addEventListener('click', () => {
     const blob = new Blob([store.exportData()], { type: 'application/json' });
     const a = document.createElement('a');
@@ -767,6 +773,67 @@ function renderSettings() {
   });
 }
 
+function timeAgo(ts) {
+  if (!ts) return 'noch nie';
+  const d = new Date(ts);
+  const same = store.todayKey(d) === store.todayKey();
+  return (same ? 'heute' : d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })) + ', ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr';
+}
+
+const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=gist&description=Geh%C3%B6rbildungstrainer';
+
+function renderSyncSection(el) {
+  if (!el) return;
+  const st = sync.getStatus();
+  const me = store.deviceInfo();
+  const devs = store.otherDevices();
+  if (!sync.isConnected()) {
+    el.innerHTML = h`
+      <h2>Synchronisation</h2>
+      <p class="muted small">Verbinde deine Geräte, dann landet dein Fortschritt auf Handy, iPad und PC an einem Ort. Gespeichert wird er in einem privaten Gist in deinem GitHub-Konto.</p>
+      <ol class="steps-list small">
+        <li><a href="${TOKEN_URL}" target="_blank" rel="noopener">Token bei GitHub erstellen</a>. Das Häkchen bei „gist" ist schon gesetzt. Unter „Expiration" kannst du „No expiration" wählen. Dann ganz unten auf „Generate token" tippen.</li>
+        <li>Den Token (beginnt mit <code>ghp_</code>) kopieren und hier einfügen.</li>
+        <li>Auf jedem Gerät denselben Token eintragen.</li>
+      </ol>
+      <label>Token<input type="password" id="sync-token" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ghp_…"></label>
+      <button class="btn primary" id="sync-connect">Verbinden</button>
+      <p class="muted small" id="sync-msg">${esc(st.message || '')}</p>`;
+    el.querySelector('#sync-connect').addEventListener('click', async () => {
+      const t = el.querySelector('#sync-token').value.trim();
+      const msg = el.querySelector('#sync-msg');
+      if (!/^(ghp_|github_pat_|gho_)/.test(t)) { msg.textContent = 'Das sieht nicht nach einem GitHub-Token aus. Er beginnt mit ghp_ oder github_pat_.'; return; }
+      el.querySelector('#sync-connect').disabled = true;
+      msg.textContent = 'Verbinde …';
+      try {
+        await sync.connect(t);
+        toast('Synchronisation eingerichtet.');
+      } catch (e) {
+        msg.textContent = e.message;
+        el.querySelector('#sync-connect').disabled = false;
+      }
+    });
+    return;
+  }
+  const stateText = { syncing: 'Gleiche ab …', ok: `Zuletzt abgeglichen: ${timeAgo(st.at)}`, error: st.message, idle: `Zuletzt abgeglichen: ${timeAgo(st.at)}` }[st.state] || '';
+  el.innerHTML = h`
+    <h2>Synchronisation</h2>
+    <p class="sync-state ${st.state}">${esc(stateText)}</p>
+    <div class="devices">
+      <div class="dev"><b>${esc(me.name)}</b><span class="pill">dieses Gerät</span></div>
+      ${devs.map((d) => `<div class="dev"><b>${esc(d.name)}</b><span class="muted small">zuletzt geübt: ${timeAgo(d.updatedAt)}</span></div>`).join('')}
+    </div>
+    ${devs.length ? '' : '<p class="muted small">Noch keine weiteren Geräte. Trage denselben Token auf deinem Handy, iPad oder PC ein.</p>'}
+    <label>Name dieses Geräts<input type="text" id="dev-name" value="${esc(me.name)}" maxlength="40"></label>
+    <div class="row-btns">
+      <button class="btn primary" id="sync-now" ${st.state === 'syncing' ? 'disabled' : ''}>Jetzt abgleichen</button>
+      <button class="btn ghost" id="sync-off">Trennen</button>
+    </div>`;
+  el.querySelector('#sync-now').addEventListener('click', () => sync.syncNow());
+  el.querySelector('#dev-name').addEventListener('change', (e) => { store.setDeviceName(e.target.value); sync.schedule(500); });
+  el.querySelector('#sync-off').addEventListener('click', () => { sync.disconnect(); toast('Synchronisation getrennt. Der Fortschritt bleibt auf diesem Gerät.'); });
+}
+
 function toast(msg) {
   const t = document.createElement('div');
   t.className = 'toast';
@@ -786,6 +853,12 @@ $tabs.innerHTML = [
 
 store.requestPersistence();
 route();
+sync.init();
+// Neue Daten von einem anderen Gerät: Übersicht neu zeichnen (nicht mitten in einer Runde)
+window.addEventListener('gbt-remote', () => {
+  const v = location.hash;
+  if (!v.startsWith('#/runde') && !v.startsWith('#/einstellungen')) route();
+});
 
 // Beim Tageswechsel (App bleibt offen) neu zeichnen
 let lastKey = store.todayKey();
