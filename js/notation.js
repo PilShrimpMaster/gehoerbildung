@@ -46,7 +46,8 @@ export function renderNotes(el, groups, opts = {}) {
   });
   const voice = new Voice({ num_beats: notes.length * 4, beat_value: 4 }).setMode(Voice.Mode.SOFT);
   voice.addTickables(notes);
-  new Formatter().joinVoices([voice]).format([voice], staveWidth - 80);
+  const avail = stave.getNoteEndX() - stave.getNoteStartX() - (groups.length > 1 ? 30 : 10);
+  new Formatter().joinVoices([voice]).format([voice], Math.max(40, avail));
   voice.draw(ctx, stave);
   const svg = el.querySelector('svg');
   if (svg) {

@@ -8,7 +8,9 @@ const DEFAULT = {
   days: {}, // 'YYYY-MM-DD' -> { answered, correct, tasks: { id: progress } }
   stats: {}, // 'modul:modus:item' -> { n, c, recent: [] }
   levels: {}, // 'modul:modus' -> Stufe
-  levelStats: {}, // 'modul:modus:stufe' -> { n, c, recent: [] }
+  levelStats: {}, // 'modul:modus:lektion' -> { n, c, recent: [] }
+  lessons: {}, // 'modul:modus:lektion' -> { best, stars, plays }
+  lastMode: {}, // modul -> zuletzt gewählter Modus
   sessions: 0,
   bestStreak: 0,
 };
@@ -98,6 +100,61 @@ export function levelStat(moduleId, mode, lvl) {
   return state.levelStats[`${moduleId}:${mode}:${lvl}`] || { n: 0, c: 0, recent: [] };
 }
 
+// ---------- Lernpfad ----------
+export const PASS = 0.8;
+
+export function lessonResult(moduleId, mode, lessonId) {
+  return (state.lessons || {})[`${moduleId}:${mode}:${lessonId}`] || { best: 0, stars: 0, plays: 0 };
+}
+
+export function starsFor(score) {
+  if (score >= 1) return 3;
+  if (score >= 0.9) return 2;
+  if (score >= PASS) return 1;
+  return 0;
+}
+
+// Speichert eine Lektionsrunde; gibt die neue Sternzahl zurück
+export function recordLesson(moduleId, mode, lessonId, score) {
+  if (!state.lessons) state.lessons = {};
+  const k = `${moduleId}:${mode}:${lessonId}`;
+  const r = state.lessons[k] || { best: 0, stars: 0, plays: 0 };
+  r.plays++;
+  r.best = Math.max(r.best, score);
+  r.stars = Math.max(r.stars, starsFor(score));
+  state.lessons[k] = r;
+  save();
+  return r;
+}
+
+// Eine Lektion ist frei, wenn die vorige bestanden ist oder eine spätere schon bestanden wurde
+export function lessonUnlocked(moduleId, mode, lessons, idx) {
+  if (idx === 0) return true;
+  if (lessonResult(moduleId, mode, lessons[idx - 1].id).stars > 0) return true;
+  for (let i = idx; i < lessons.length; i++) if (lessonResult(moduleId, mode, lessons[i].id).stars > 0) return true;
+  return false;
+}
+
+// Erste noch nicht bestandene, aber freie Lektion (sonst die letzte)
+export function currentLesson(moduleId, mode, lessons) {
+  let lastPassed = -1;
+  lessons.forEach((l, i) => { if (lessonResult(moduleId, mode, l.id).stars > 0) lastPassed = i; });
+  for (let i = lastPassed + 1; i < lessons.length; i++) {
+    if (lessonResult(moduleId, mode, lessons[i].id).stars === 0) return { lesson: lessons[i], idx: i };
+  }
+  return { lesson: lessons[lessons.length - 1], idx: lessons.length - 1 };
+}
+
+export function getLastMode(moduleId) {
+  return (state.lastMode || {})[moduleId] || 'hear';
+}
+
+export function setLastMode(moduleId, mode) {
+  if (!state.lastMode) state.lastMode = {};
+  state.lastMode[moduleId] = mode;
+  save();
+}
+
 // Ergebnis einer einzelnen Aufgabe speichern
 export function recordAnswer({ module, mode, item, correct, level }) {
   bump(state.stats, `${module}:${mode}:${item}`, correct);
@@ -107,9 +164,6 @@ export function recordAnswer({ module, mode, item, correct, level }) {
   if (correct) day.correct++;
   for (const t of dailyTasks()) {
     if (t.kind === 'correct' && correct && t.module === module && (!t.mode || t.mode === mode)) {
-      day.tasks[t.id] = Math.min(t.target, (day.tasks[t.id] || 0) + 1);
-    }
-    if (t.kind === 'level' && correct && t.module === module && level >= t.minLevel) {
       day.tasks[t.id] = Math.min(t.target, (day.tasks[t.id] || 0) + 1);
     }
   }

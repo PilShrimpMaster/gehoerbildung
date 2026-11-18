@@ -14,12 +14,17 @@ const buffers = new Map(); // midi -> AudioBuffer
 const loading = new Map(); // midi -> Promise
 const active = new Set();
 
+export function setAudioSession(type) {
+  try {
+    if (navigator.audioSession && navigator.audioSession.type !== type) navigator.audioSession.type = type;
+  } catch (e) { /* ignorieren */ }
+}
+
 export function getContext() {
   if (!ctx) {
-    // Unter iOS sorgt "playback" dafür, dass auch bei Stummschalter Ton kommt (iOS 17+)
-    try {
-      if (navigator.audioSession) navigator.audioSession.type = 'playback';
-    } catch (e) { /* ignorieren */ }
+    // Unter iOS sorgt "playback" dafür, dass auch bei Stummschalter Ton kommt (iOS 17+).
+    // Wichtig: Beim Singen muss auf "play-and-record" umgestellt werden, sonst sperrt iOS das Mikrofon.
+    setAudioSession('playback');
     const AC = window.AudioContext || window.webkitAudioContext;
     ctx = new AC({ latencyHint: 'interactive' });
     master = ctx.createGain();

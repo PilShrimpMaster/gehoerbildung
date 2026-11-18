@@ -60,7 +60,7 @@ function route() {
   window.scrollTo(0, 0);
   if (view === 'ueben') return renderPractice();
   if (view === 'bereich') return renderModule(args[0]);
-  if (view === 'runde') return renderSession(args[0], args[1], Number(args[2]) || 1);
+  if (view === 'runde') return renderSession(args[0], args[1], args[2]);
   if (view === 'statistik') return renderStats();
   if (view === 'einstellungen') return renderSettings();
   return renderToday();
@@ -70,6 +70,21 @@ window.addEventListener('hashchange', route);
 function go(hash) {
   if (location.hash === hash) route();
   else location.hash = hash;
+}
+
+function lessonHref(moduleId, mode) {
+  const m = moduleById(moduleId);
+  const { lesson } = store.currentLesson(moduleId, mode, m.lessons);
+  return `#/runde/${moduleId}/${mode}/${lesson.id}`;
+}
+
+function lessonNo(m, lessonId) {
+  return m.lessons.findIndex((l) => l.id === lessonId) + 1;
+}
+
+const STAR = '<svg class="star" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4L2.8 9.5l6.4-.8z"/></svg>';
+function stars(n, total = 3) {
+  return `<span class="stars" aria-label="${n} von ${total} Sternen">${Array.from({ length: total }, (_, i) => `<i class="${i < n ? 'on' : ''}">${STAR}</i>`).join('')}</span>`;
 }
 
 // ---------- Heute ----------
@@ -120,9 +135,8 @@ function renderToday() {
           const p = store.taskProgress(t);
           const ok = p >= t.target;
           const mod = moduleById(t.module);
-          const mode = t.mode || 'hear';
-          const lvl = store.getLevel(t.module, mode);
-          return h`<a class="task card ${ok ? 'done' : ''}" href="#/runde/${t.module}/${mode}/${lvl}">
+          const mode = t.mode || store.getLastMode(t.module);
+          return h`<a class="task card ${ok ? 'done' : ''}" href="${lessonHref(t.module, mode)}">
             <div class="task-ic">${ok ? icon('check') : icon(t.mode ? MODE_ICON[t.mode] : 'target')}</div>
             <div class="task-body">
               <p>${esc(t.title)}</p>
@@ -140,8 +154,8 @@ function renderToday() {
         ${MODULES.filter((m) => m.available).map((m) => `<div class="quick-mod card">
           <a class="qm-head" href="#/bereich/${m.id}">${icon(m.icon, 'mod-ic sm')}<b>${m.title}</b>${icon('chevron', 'chev')}</a>
           <div class="qm-modes">${m.modes.map((md) => {
-            const lvl = store.getLevel(m.id, md.id);
-            return `<a class="qm-btn" href="#/runde/${m.id}/${md.id}/${lvl}">${icon(MODE_ICON[md.id])}<span>${md.title}</span><em>Stufe ${lvl}</em></a>`;
+            const { lesson, idx } = store.currentLesson(m.id, md.id, m.lessons);
+            return `<a class="qm-btn" href="#/runde/${m.id}/${md.id}/${lesson.id}">${icon(MODE_ICON[md.id])}<span>${md.title}</span><em>Lektion ${idx + 1}: ${esc(lesson.title)}</em></a>`;
           }).join('')}</div>
         </div>`).join('')}
       </div>
@@ -167,39 +181,55 @@ function renderPractice() {
 function renderModule(id) {
   const m = moduleById(id);
   if (!m || !m.available) return go('#/ueben');
+  let mode = store.getLastMode(m.id);
+  if (!m.modes.find((x) => x.id === mode)) mode = m.modes[0].id;
   $app.innerHTML = h`
     <header class="page-head with-back">
       <a class="back" href="#/ueben" aria-label="Zurück">${icon('chevron')}</a>
       <div><h1>${m.title}</h1><p class="lead">${m.blurb}</p></div>
     </header>
-    <div class="modes">
-      ${m.modes.map((md) => {
-        const lvl = store.getLevel(m.id, md.id);
-        return h`<section class="mode card" data-mode="${md.id}">
-          <div class="mode-head">${icon(MODE_ICON[md.id], 'mode-ic')}<div><h3>${md.title}</h3><p>${md.desc}</p></div></div>
-          <div class="levels" role="radiogroup" aria-label="Stufe">
-            ${m.levels.map((L) => {
-              const ls = store.levelStat(m.id, md.id, L.n);
-              const acc = ls.recent.length ? pct(ls.recent.reduce((a, b) => a + b, 0), ls.recent.length) : null;
-              return `<button class="lvl ${L.n === lvl ? 'on' : ''}" data-lvl="${L.n}" role="radio" aria-checked="${L.n === lvl}"><b>${L.n}</b><span>${L.name}</span>${acc !== null ? `<em>${acc} %</em>` : '<em>&nbsp;</em>'}</button>`;
+    <div class="seg mode-seg" role="tablist">${m.modes.map((md) => `<button data-mode="${md.id}" class="${md.id === mode ? 'on' : ''}">${icon(MODE_ICON[md.id])} ${md.title}</button>`).join('')}</div>
+    <div class="path"></div>
+  `;
+  const $path = $app.querySelector('.path');
+  const draw = () => {
+    const cur = store.currentLesson(m.id, mode, m.lessons).lesson.id;
+    const passed = m.lessons.filter((l) => store.lessonResult(m.id, mode, l.id).stars > 0).length;
+    let idx = 0;
+    $path.innerHTML = h`
+      <div class="path-progress card">
+        <div class="goal-top"><span>${m.modes.find((x) => x.id === mode).desc}</span></div>
+        <div class="bar"><div style="width:${Math.round((100 * passed) / m.lessons.length)}%"></div></div>
+        <p class="hint">${passed} von ${m.lessons.length} Lektionen bestanden. Ab 80 % richtig ist eine Lektion bestanden und die nächste wird frei.</p>
+      </div>
+      ${m.sections.map((sec) => h`
+        <section class="path-sec">
+          <div class="sec-head"><div><h2>${sec.title}</h2><p class="muted small">${sec.desc}</p></div></div>
+          <div class="lessons">
+            ${sec.lessons.map((l) => {
+              const i = idx++;
+              const r = store.lessonResult(m.id, mode, l.id);
+              const open = store.lessonUnlocked(m.id, mode, m.lessons, i);
+              const cls = [r.stars ? 'passed' : '', l.id === cur ? 'current' : '', open ? '' : 'locked'].join(' ');
+              return h`<a class="lesson card ${cls}" href="#/runde/${m.id}/${mode}/${l.id}">
+                <span class="l-no">${r.stars ? icon('check') : open ? i + 1 : icon('lock')}</span>
+                <div class="l-body"><b>${esc(l.title)}</b><p>${esc(l.desc)}</p></div>
+                <div class="l-side">${r.plays ? stars(r.stars) : l.id === cur ? '<span class="pill now">Jetzt</span>' : ''}</div>
+              </a>`;
             }).join('')}
           </div>
-          <p class="lvl-desc">${m.levels[lvl - 1].desc}</p>
-          <a class="btn primary" href="#/runde/${m.id}/${md.id}/${lvl}">${icon('play')} Runde starten</a>
-        </section>`;
-      }).join('')}
-    </div>
-  `;
-  $app.querySelectorAll('.mode').forEach((sec) => {
-    const mode = sec.dataset.mode;
-    sec.querySelectorAll('.lvl').forEach((b) => b.addEventListener('click', () => {
-      const n = Number(b.dataset.lvl);
-      store.setLevel(m.id, mode, n);
-      sec.querySelectorAll('.lvl').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
-      sec.querySelector('.lvl-desc').textContent = m.levels[n - 1].desc;
-      sec.querySelector('.btn.primary').setAttribute('href', `#/runde/${m.id}/${mode}/${n}`);
-    }));
-  });
+        </section>`).join('')}
+    `;
+    const curEl = $path.querySelector('.lesson.current');
+    if (curEl && passed > 0) curEl.scrollIntoView({ block: 'center' });
+  };
+  $app.querySelectorAll('.mode-seg button').forEach((b) => b.addEventListener('click', () => {
+    mode = b.dataset.mode;
+    store.setLastMode(m.id, mode);
+    $app.querySelectorAll('.mode-seg button').forEach((x) => x.classList.toggle('on', x === b));
+    draw();
+  }));
+  draw();
 }
 
 // ---------- Übungsrunde ----------
@@ -222,12 +252,17 @@ function makePicker(moduleId, mode) {
   };
 }
 
-function renderSession(moduleId, mode, level) {
+function renderSession(moduleId, mode, lessonId) {
   const m = moduleById(moduleId);
   if (!m || !m.available || !m.modes.find((x) => x.id === mode)) return go('#/ueben');
-  level = Math.max(1, Math.min(m.levels.length, level));
-  store.setLevel(m.id, mode, level);
+  let lIdx = m.lessons.findIndex((l) => l.id === lessonId);
+  if (lIdx < 0) lIdx = store.currentLesson(m.id, mode, m.lessons).idx;
+  const lesson = m.lessons[lIdx];
+  const level = lesson.id;
+  const unlocked = store.lessonUnlocked(m.id, mode, m.lessons, lIdx);
+  store.setLastMode(m.id, mode);
   const modeInfo = m.modes.find((x) => x.id === mode);
+  const introCards = m.intro ? m.intro(lesson, mode) : [];
   const pickItem = makePicker(m.id, mode);
   const results = [];
   let idx = 0;
@@ -245,7 +280,7 @@ function renderSession(moduleId, mode, level) {
       <header class="sess-head">
         <a class="icon-btn" href="#/bereich/${m.id}" aria-label="Runde beenden">${icon('close')}</a>
         <div class="bar progress"><div style="width:0%"></div></div>
-        <span class="pill">${icon(MODE_ICON[mode])} Stufe ${level}</span>
+        <span class="pill">${icon(MODE_ICON[mode])} Lektion ${lIdx + 1}</span>
       </header>
       <main class="sess-body"></main>
     </div>
@@ -254,16 +289,30 @@ function renderSession(moduleId, mode, level) {
   const $prog = $app.querySelector('.progress > div');
 
   // Startbildschirm (sorgt auch für die nötige Nutzer-Geste für Audio und Mikrofon)
+  const res = store.lessonResult(m.id, mode, lesson.id);
   $body.innerHTML = h`
     <div class="start card">
       ${icon(MODE_ICON[mode], 'big-ic')}
-      <h2>${m.title}: ${modeInfo.title}</h2>
-      <p class="muted">Stufe ${level} · ${m.levels[level - 1].name}</p>
-      <p>${m.levels[level - 1].desc}</p>
-      ${mode === 'sing' ? `<p class="hint">Beim Nachsingen fragt dein Gerät nach dem Mikrofon. Sing am besten in ruhiger Umgebung, laut und deutlich. Du kannst den Ton in jeder Oktave singen.</p>` : ''}
+      <p class="muted">${m.title} · ${modeInfo.title} · Lektion ${lIdx + 1}</p>
+      <h2>${esc(lesson.title)}</h2>
+      <p>${esc(lesson.desc)}</p>
+      ${res.plays ? `<p class="muted small">Bisher bestes Ergebnis: ${Math.round(res.best * 100)} % ${stars(res.stars)}</p>` : ''}
+      ${unlocked ? '' : '<p class="hint warn">Diese Lektion ist noch gesperrt. Du kannst sie trotzdem probieren. Bestehst du sie, werden alle Lektionen davor mit freigeschaltet.</p>'}
+      ${mode === 'sing' ? `<p class="hint">Beim Nachsingen fragt dein Gerät nach dem Mikrofon. Sing in ruhiger Umgebung, laut und deutlich. Du kannst den Ton in jeder Oktave singen.</p>` : ''}
+      <p class="hint mic-err" hidden></p>
       <button class="btn primary big" id="go">${icon('play')} Los geht's</button>
-      <p class="muted small">${SESSION_LEN} Aufgaben</p>
-    </div>`;
+      <p class="muted small">${SESSION_LEN} Aufgaben · ab 8 richtigen bestanden</p>
+    </div>
+    ${introCards.length ? h`<section class="intro">
+      <div class="sec-head"><h2>Neu in dieser Lektion</h2><span class="muted small">Tippe zum Anhören</span></div>
+      <div class="intro-list">${introCards.map((c, i) => `<button class="intro-card card ${c.groups.length > 3 ? 'col' : ''}" data-i="${i}"><div class="staff"></div><div class="ic-text"><b>${esc(c.title)}</b><span>${esc(c.text)}</span></div>${icon('play', 'ic-play')}</button>`).join('')}</div>
+    </section>` : ''}`;
+  $body.querySelectorAll('.intro-card').forEach((el) => {
+    const c = introCards[Number(el.dataset.i)];
+    const st = el.querySelector('.staff');
+    renderNotes(st, c.groups, { duration: c.duration, width: Math.min(st.clientWidth || 260, c.groups.length > 3 ? 420 : 260), height: 110 });
+    el.addEventListener('click', async () => { await unlock(); c.play(); });
+  });
   $body.querySelector('#go').addEventListener('click', async () => {
     const btn = $body.querySelector('#go');
     btn.disabled = true;
@@ -275,7 +324,9 @@ function renderSession(moduleId, mode, level) {
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = `${icon('mic')} Nochmal versuchen`;
-        $body.querySelector('.hint').innerHTML = 'Das Mikrofon konnte nicht gestartet werden. Bitte erlaube den Zugriff in den Einstellungen deines Geräts (Safari › Mikrofon) und versuch es erneut.';
+        const $err = $body.querySelector('.mic-err');
+        $err.hidden = false;
+        $err.textContent = e.userMessage || `Das Mikrofon konnte nicht gestartet werden (${e.name || e.message}).`;
         return;
       }
     }
@@ -285,7 +336,7 @@ function renderSession(moduleId, mode, level) {
   function next() {
     if (!alive) return;
     if (idx >= SESSION_LEN) return finish();
-    q = m.makeQuestion(mode, level, pickItem, { settings: store.settings() });
+    q = m.makeQuestion(mode, lesson, pickItem, { settings: store.settings() });
     $prog.style.width = `${(100 * idx) / SESSION_LEN}%`;
     if (q.type === 'sing') return showSing();
     showQuestion();
@@ -335,7 +386,7 @@ function renderSession(moduleId, mode, level) {
       $ans.innerHTML = q.options.map((o) => `<button class="ans" data-id="${esc(o.id)}">${esc(o.label)}</button>`).join('');
       $ans.querySelectorAll('.ans').forEach((b) => b.addEventListener('click', () => {
         const id = b.dataset.id;
-        const ok = id === q.answer;
+        const ok = q.accept ? q.accept(id) : id === q.answer;
         $ans.querySelectorAll('.ans').forEach((x) => {
           x.disabled = true;
           if (x.dataset.id === q.answer) x.classList.add('right');
@@ -360,11 +411,11 @@ function renderSession(moduleId, mode, level) {
         upd();
       }));
       $ans.querySelector('#check').addEventListener('click', () => {
-        const ok = q.parts.every((p) => String(sel[p.key]) === String(q.answer[p.key]));
+        const ok = q.accept ? q.accept(sel) : q.parts.every((p) => String(sel[p.key]) === String(q.answer[p.key]));
         $ans.querySelectorAll('button').forEach((x) => { x.disabled = true; });
         for (const p of q.parts) {
           $ans.querySelector(`.chip[data-part="${p.key}"][data-id="${CSS.escape(String(q.answer[p.key]))}"]`)?.classList.add('right');
-          if (String(sel[p.key]) !== String(q.answer[p.key])) $ans.querySelector(`.chip[data-part="${p.key}"][data-id="${CSS.escape(String(sel[p.key]))}"]`)?.classList.add('wrong');
+          if (!ok && String(sel[p.key]) !== String(q.answer[p.key])) $ans.querySelector(`.chip[data-part="${p.key}"][data-id="${CSS.escape(String(sel[p.key]))}"]`)?.classList.add('wrong');
         }
         answered(ok);
         showFeedback(ok, null, ok ? null : q.labelFor(sel));
@@ -379,7 +430,7 @@ function renderSession(moduleId, mode, level) {
     $fb.className = `feedback card ${ok ? 'ok' : 'bad'}`;
     const yourLabel = wrongLabel || (wrongId && q.options ? q.options.find((o) => o.id === wrongId)?.label : null);
     $fb.innerHTML = h`
-      <div class="fb-head">${ok ? icon('check') : icon('close')}<div><strong>${ok ? pickPraise() : 'Nicht ganz.'}</strong><p>${esc(q.reveal.text)}</p>${yourLabel ? `<p class="muted small">Deine Antwort: ${esc(yourLabel)}</p>` : ''}</div></div>
+      <div class="fb-head">${ok ? icon('check') : icon('close')}<div><strong>${ok ? pickPraise() : 'Nicht ganz.'}</strong><p>${esc(q.reveal.text)}</p>${yourLabel ? `<p class="muted small">Deine Antwort: ${esc(yourLabel)}</p>` : ''}${q.reveal.note ? `<p class="muted small">${esc(q.reveal.note)}</p>` : ''}</div></div>
       ${mode === 'hear' ? '<div class="staff reveal-staff"></div>' : ''}
       <div class="fb-actions">
         <button class="btn ghost" id="again">${icon('replay')} Nochmal hören</button>
@@ -402,6 +453,7 @@ function renderSession(moduleId, mode, level) {
     $body.innerHTML = questionShell(h`
       <div class="tuner">
         <div class="tuner-note"><span id="sung">–</span><small id="cents">&nbsp;</small></div>
+        <div class="level" title="Mikrofon-Pegel">${icon('mic')}<div class="bar small"><div id="lvl"></div></div></div>
         <div class="meter"><div class="zone" style="--tol:${tol}"></div><div class="needle" id="needle"></div><span class="lbl l">tiefer</span><span class="lbl r">höher</span></div>
         <div class="hold"><div id="hold"></div></div>
         ${(q.targets || []).length > 1 ? `<div class="steps">${q.targets.map((_, i) => `<i data-i="${i}"></i>`).join('')}</div>` : ''}
@@ -421,6 +473,8 @@ function renderSession(moduleId, mode, level) {
     const $needle = $body.querySelector('#needle');
     const $hold = $body.querySelector('#hold');
     const $hint = $body.querySelector('#sing-hint');
+    const $lvl = $body.querySelector('#lvl');
+    let quietMs = 0;
     const targets = q.targets || [q.targetMidi];
     let ti = 0;
     const HOLD = targets.length > 1 ? 550 : 700;
@@ -446,8 +500,11 @@ function renderSession(moduleId, mode, level) {
       const dt = Math.min(100, now - last);
       last = now;
       const p = readPitch();
+      if (p) $lvl.style.width = `${Math.min(100, Math.round(Math.sqrt(p.rms) * 220))}%`;
+      if (p && p.rms < 0.002) quietMs += dt; else quietMs = 0;
+      if (quietMs > 4000 && now > playingUntil) $hint.textContent = 'Ich höre nichts. Sing lauter oder prüfe, ob das richtige Mikrofon ausgewählt ist.';
       // Während der Grundton klingt, nicht auswerten (sonst "hört" das Mikrofon das Klavier)
-      if (p && p.freq > 0 && p.clarity > 0.8 && now > playingUntil) {
+      if (p && p.freq > 0 && p.clarity > 0.6 && now > playingUntil) {
         const sm = midiOfFreq(p.freq);
         const nearest = Math.round(sm);
         // Abweichung zum Zielton, Oktavlage egal
@@ -510,25 +567,30 @@ function renderSession(moduleId, mode, level) {
     const p = pct(correct, results.length);
     const mistakes = {};
     results.filter((r) => !r.correct).forEach((r) => { mistakes[r.item] = (mistakes[r.item] || 0) + 1; });
-    const ls = store.levelStat(m.id, mode, level);
-    const recentAcc = ls.recent.length ? ls.recent.reduce((a, b) => a + b, 0) / ls.recent.length : 0;
-    const ready = level < m.levels.length && ls.recent.length >= 20 && recentAcc >= 0.85;
+    const score = results.length ? correct / results.length : 0;
+    const before = store.lessonResult(m.id, mode, lesson.id).stars;
+    const r = store.recordLesson(m.id, mode, lesson.id, score);
+    const passedNow = store.starsFor(score) > 0;
+    const nextLesson = m.lessons[lIdx + 1];
     const day = store.getDay();
     const goal = store.settings().dailyGoal;
     $prog.style.width = '100%';
     $body.innerHTML = h`
       <div class="summary card">
-        <div class="score-ring" style="--p:${p}"><span>${p} %</span></div>
-        <h2>${p >= 90 ? 'Hervorragend!' : p >= 70 ? 'Gut gemacht!' : p >= 50 ? 'Weiter so!' : 'Dranbleiben lohnt sich!'}</h2>
-        <p>${correct} von ${results.length} richtig</p>
+        <div class="score-ring ${passedNow ? 'pass' : ''}" style="--p:${p}"><span>${p} %</span></div>
+        ${stars(store.starsFor(score))}
+        <h2>${passedNow ? (before === 0 ? 'Lektion bestanden!' : p === 100 ? 'Perfekt!' : 'Wieder bestanden!') : p >= 60 ? 'Fast geschafft!' : 'Dranbleiben lohnt sich!'}</h2>
+        <p>${correct} von ${results.length} richtig${passedNow ? '' : ' · ab 8 richtigen ist die Lektion bestanden'}</p>
         ${Object.keys(mistakes).length ? `<div class="mistakes"><p class="muted small">Daran kannst du noch arbeiten:</p>${Object.entries(mistakes).map(([id, n]) => `<span class="pill">${esc(m.itemLabel(id))}${n > 1 ? ` ×${n}` : ''}</span>`).join('')}</div>` : ''}
         <p class="muted">${day.answered >= goal ? `${icon('flame', 'flame inline')} Tagesziel erreicht, Streak: ${store.streak()} ${store.streak() === 1 ? 'Tag' : 'Tage'}` : `Tagesziel: ${day.answered} / ${goal}`}</p>
-        ${ready ? `<div class="levelup"><strong>Bereit für Stufe ${level + 1}?</strong><p>Deine letzten 20 Antworten auf dieser Stufe waren zu ${Math.round(recentAcc * 100)} % richtig.</p><a class="btn primary" href="#/runde/${m.id}/${mode}/${level + 1}">Stufe ${level + 1} probieren</a></div>` : ''}
+        ${passedNow && nextLesson ? h`<div class="levelup"><strong>${before === 0 ? 'Neu freigeschaltet' : 'Weiter geht es mit'}: Lektion ${lIdx + 2}</strong><p>${esc(nextLesson.title)}</p><a class="btn primary" href="#/runde/${m.id}/${mode}/${nextLesson.id}">Nächste Lektion ${icon('chevron')}</a></div>` : ''}
+        ${passedNow && !nextLesson ? `<div class="levelup"><strong>Du hast den ganzen Lernpfad geschafft!</strong><p>Wiederhole Lektionen für mehr Sterne oder probiere einen anderen Modus.</p></div>` : ''}
         <div class="fb-actions">
-          <a class="btn ghost" href="#/heute">Zur Übersicht</a>
-          <button class="btn primary" id="again">${icon("replay")} Nochmal</button>
+          <a class="btn ghost" href="#/bereich/${m.id}">Zum Lernpfad</a>
+          <button class="btn ${passedNow && nextLesson ? 'ghost' : 'primary'}" id="again">${icon('replay')} Nochmal</button>
         </div>
       </div>`;
+    void r;
     $body.querySelector('#again').addEventListener('click', () => route());
   }
 }
@@ -652,15 +714,18 @@ function renderSettings() {
       await unlock();
       await startMic();
     } catch (e) {
-      out.textContent = 'Kein Zugriff auf das Mikrofon. Bitte in den Geräteeinstellungen erlauben.';
+      out.textContent = e.userMessage || `Kein Zugriff auf das Mikrofon (${e.name || e.message}).`;
       return;
     }
     const loop = () => {
       const p = readPitch();
-      if (p && p.freq > 0 && p.clarity > 0.8) {
+      const lvl = p ? Math.min(100, Math.round(Math.sqrt(p.rms) * 220)) : 0;
+      if (p && p.freq > 0 && p.clarity > 0.6) {
         const mm = midiOfFreq(p.freq);
         const c = Math.round((mm - Math.round(mm)) * 100);
-        out.textContent = `Erkannt: ${noteNameFromMidi(Math.round(mm))} (${Math.round(p.freq)} Hz, ${c > 0 ? '+' : ''}${c} Cent). Tippe erneut zum Beenden.`;
+        out.textContent = `Pegel ${lvl} %. Erkannt: ${noteNameFromMidi(Math.round(mm))} (${Math.round(p.freq)} Hz, ${c > 0 ? '+' : ''}${c} Cent). Tippe erneut zum Beenden.`;
+      } else {
+        out.textContent = `Pegel ${lvl} %. Sing einen Ton … ${lvl < 3 ? '(Ich höre fast nichts.)' : ''}`;
       }
       testing = requestAnimationFrame(loop);
     };
