@@ -1,5 +1,5 @@
 // Tonhöhenerkennung über das Mikrofon (YIN-Algorithmus).
-import { getContext, setAudioSession } from './audio.js';
+import { getContext, setAudioSession, rebuildContext } from './audio.js';
 
 let stream = null;
 let analyser = null;
@@ -29,11 +29,9 @@ export async function startMic() {
       }
     }
   }
-  const ctx = getContext();
-  if (ctx.state !== 'running') {
-    try { await ctx.resume(); } catch (e) { /* ignorieren */ }
-  }
   if (!analyser) {
+    // Nach dem Mikrofonstart den Audio-Context neu anlegen, damit iOS den Klavierklang wieder ausgibt
+    const ctx = await rebuildContext('play-and-record');
     source = ctx.createMediaStreamSource(stream);
     analyser = ctx.createAnalyser();
     analyser.fftSize = 4096;
@@ -63,6 +61,7 @@ function explain(e) {
 }
 
 export function stopMic() {
+  const wasActive = !!stream;
   if (source) source.disconnect();
   if (analyser) analyser.disconnect();
   if (stream) stream.getTracks().forEach((t) => t.stop());
@@ -70,7 +69,7 @@ export function stopMic() {
   analyser = null;
   source = null;
   sink = null;
-  setAudioSession('playback');
+  if (wasActive) rebuildContext('playback');
 }
 
 export function micActive() {

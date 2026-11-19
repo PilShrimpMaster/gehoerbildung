@@ -20,15 +20,17 @@ export function setAudioSession(type) {
   } catch (e) { /* ignorieren */ }
 }
 
+let sessionType = 'playback';
+
 export function getContext() {
   if (!ctx) {
-    // Unter iOS sorgt "playback" dafür, dass auch bei Stummschalter Ton kommt (iOS 17+).
-    // Wichtig: Beim Singen muss auf "play-and-record" umgestellt werden, sonst sperrt iOS das Mikrofon.
-    setAudioSession('playback');
+    // iOS: "playback" sorgt dafür, dass auch bei Stummschalter Ton kommt (iOS 17+).
+    // Beim Singen wird auf "play-and-record" umgestellt (sonst sperrt iOS das Mikrofon).
+    setAudioSession(sessionType);
     const AC = window.AudioContext || window.webkitAudioContext;
     ctx = new AC({ latencyHint: 'interactive' });
     master = ctx.createGain();
-    master.gain.value = 0.9;
+    master.gain.value = 1;
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -12;
     comp.ratio.value = 3;
@@ -37,11 +39,36 @@ export function getContext() {
   return ctx;
 }
 
-export async function unlock() {
+// Baut den AudioContext für eine neue Audio-Sitzung neu auf.
+// iOS lässt einen Context stumm, der vor dem Wechsel der Audio-Sitzung (z. B. Mikrofonstart) angelegt wurde.
+export async function rebuildContext(type) {
+  sessionType = type;
+  const old = ctx;
+  ctx = null;
+  master = null;
+  active.clear();
+  if (old) {
+    try { await old.close(); } catch (e) { /* ignorieren */ }
+  }
   const c = getContext();
   if (c.state !== 'running') {
     try { await c.resume(); } catch (e) { /* ignorieren */ }
   }
+  return c;
+}
+
+// Stellt sicher, dass Ton herauskommt; repariert einen hängenden oder unterbrochenen Context
+async function ensureRunning() {
+  let c = getContext();
+  if (c.state !== 'running') {
+    try { await c.resume(); } catch (e) { /* ignorieren */ }
+  }
+  if (c.state !== 'running') c = await rebuildContext(sessionType);
+  return c;
+}
+
+export async function unlock() {
+  const c = await ensureRunning();
   // Ein kurzer stiller Puffer entsperrt Audio auf älteren iOS-Versionen
   const b = c.createBuffer(1, 1, 22050);
   const s = c.createBufferSource();
@@ -101,7 +128,7 @@ export function stopAll() {
 
 // Spielt eine Note. when: Sekunden ab jetzt; dur: Klingdauer in Sekunden.
 export async function playNote(midi, when = 0, dur = 1.2, vel = 0.8) {
-  const c = getContext();
+  const c = await ensureRunning();
   const s = nearestSample(midi);
   const buf = await loadSample(s);
   const t0 = c.currentTime + Math.max(0, when);
@@ -123,8 +150,8 @@ export async function playNote(midi, when = 0, dur = 1.2, vel = 0.8) {
 // Folge von Ereignissen: [{midis:[..], at: s, dur: s}]
 export async function playSequence(events, vel = 0.8) {
   const midis = events.flatMap((e) => e.midis);
-  await unlock();
   await preload(midis);
+  await unlock();
   stopAll();
   const start = 0.05;
   for (const e of events) for (const m of e.midis) playNote(m, start + e.at, e.dur, vel);

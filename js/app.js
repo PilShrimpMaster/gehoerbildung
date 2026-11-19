@@ -462,7 +462,6 @@ function renderSession(moduleId, mode, lessonId) {
         <p class="muted small" id="sing-hint">${(q.targets || []).length > 1 ? `Sing die Töne nacheinander und halte jeden kurz. Ton 1 von ${q.targets.length}.` : 'Sing den Zielton und halte ihn kurz.'}</p>
       </div>`);
     drawStaff(q.notation.groups, q.notation.clef);
-    $body.querySelector('#play').addEventListener('click', () => q.play());
     const $ans = $body.querySelector('.answers');
     $ans.className = 'answers row';
     $ans.innerHTML = `<button class="btn ghost" id="giveup">Lösung anhören</button>`;
