@@ -3,7 +3,7 @@ import * as sync from './sync.js';
 import { MODULES, moduleById } from './modules/index.js';
 import { renderNotes } from './notation.js';
 import { unlock, blip, stopAll, preloadAll, playMelodic } from './audio.js';
-import { startMic, stopMic, readPitch } from './pitch.js';
+import { startMic, stopMic, readPitch, getCalibration, setCalibration, calibrationCents } from './pitch.js';
 import { midiOfFreq, weightedPick } from './theory.js';
 import { VOICE_RANGES } from './modules/intervals.js';
 
@@ -681,6 +681,12 @@ function renderSettings() {
       </label>
       <button class="btn ghost" id="mic-test">${icon('mic')} Mikrofon testen</button>
       <p class="muted small" id="mic-out"></p>
+      <div class="calib">
+        <b>Tonhöhe kalibrieren</b>
+        <p class="muted small">Falls Töne zu hoch oder zu tief erkannt werden: Spiele mit einem anderen Gerät (Stimmgerät-App oder Tongenerator) den Kammerton a' mit 440 Hz und tippe dann auf „Kalibrieren".</p>
+        <p class="small" id="calib-state">${calibrationCents() ? `Aktive Korrektur: ${calibrationCents() > 0 ? '+' : ''}${calibrationCents()} Cent` : 'Keine Korrektur aktiv.'}</p>
+        <div class="row-btns"><button class="btn ghost" id="calib-go">Kalibrieren (440 Hz)</button><button class="btn ghost" id="calib-reset" ${calibrationCents() ? '' : 'hidden'}>Zurücksetzen</button></div>
+      </div>
     </section>
     <section class="card form" id="sync-sec"></section>
     <section class="card form">
@@ -734,6 +740,33 @@ function renderSettings() {
       testing = requestAnimationFrame(loop);
     };
     out.textContent = 'Sing einen Ton …';
+    loop();
+  });
+  $app.querySelector('#calib-reset').addEventListener('click', () => { setCalibration(1); route(); });
+  $app.querySelector('#calib-go').addEventListener('click', async () => {
+    const st = $app.querySelector('#calib-state');
+    const btn = $app.querySelector('#calib-go');
+    if (testing) { cancelAnimationFrame(testing); testing = null; }
+    try { await unlock(); await startMic(); } catch (e) { st.textContent = e.userMessage || 'Kein Zugriff auf das Mikrofon.'; return; }
+    btn.disabled = true;
+    st.textContent = 'Höre zu … spiel jetzt 440 Hz ab.';
+    const vals = [];
+    const t0 = performance.now();
+    const loop = () => {
+      const p = readPitch();
+      if (p && p.raw > 300 && p.raw < 600 && p.clarity > 0.8) vals.push(p.raw);
+      if (performance.now() - t0 < 4000 && vals.length < 90) { testing = requestAnimationFrame(loop); return; }
+      testing = null;
+      btn.disabled = false;
+      if (vals.length < 20) { st.textContent = 'Kein klarer Ton um 440 Hz gehört. Lauter abspielen und nochmal versuchen.'; return; }
+      vals.sort((a, b) => a - b);
+      const med = vals[Math.floor(vals.length / 2)];
+      const f = 440 / med;
+      if (Math.abs(1200 * Math.log2(f)) > 300) { st.textContent = `Gemessen: ${Math.round(med)} Hz. Das ist zu weit von 440 Hz weg, bitte prüfen, ob wirklich 440 Hz gespielt werden.`; return; }
+      setCalibration(f);
+      st.textContent = `Gemessen: ${med.toFixed(1)} Hz. Korrektur gespeichert: ${calibrationCents() > 0 ? '+' : ''}${calibrationCents()} Cent.`;
+      $app.querySelector('#calib-reset').hidden = false;
+    };
     loop();
   });
   const offSync = sync.onStatus(() => renderSyncSection($app.querySelector('#sync-sec')));

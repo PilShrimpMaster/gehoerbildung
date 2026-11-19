@@ -1,5 +1,5 @@
 // Service Worker: speichert die App für die Offline-Nutzung.
-const VERSION = 'gbt-v1.3.1';
+const VERSION = 'gbt-v1.3.2';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/store.js', 'js/sync.js', 'js/theory.js', 'js/audio.js', 'js/pitch.js', 'js/notation.js',

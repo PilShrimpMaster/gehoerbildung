@@ -31,7 +31,10 @@ export async function startMic() {
   }
   if (!analyser) {
     // Nach dem Mikrofonstart den Audio-Context neu anlegen, damit iOS den Klavierklang wieder ausgibt
-    const ctx = await rebuildContext('play-and-record');
+    // Gleiche Abtastrate wie das Mikrofon, sonst misst iOS die Tonhöhe falsch
+    let rate = 0;
+    try { rate = stream.getAudioTracks()[0].getSettings().sampleRate || 0; } catch (e) { /* ignorieren */ }
+    const ctx = await rebuildContext('play-and-record', rate);
     source = ctx.createMediaStreamSource(stream);
     analyser = ctx.createAnalyser();
     analyser.fftSize = 4096;
@@ -72,6 +75,16 @@ export function stopMic() {
   if (wasActive) rebuildContext('playback');
 }
 
+// ---------- Kalibrierung (pro Gerät) ----------
+const CAL_KEY = 'gbt-calib-v1';
+let calib = (() => { try { return Number(localStorage.getItem(CAL_KEY)) || 1; } catch (e) { return 1; } })();
+export function getCalibration() { return calib; }
+export function setCalibration(f) {
+  calib = f;
+  try { if (f === 1) localStorage.removeItem(CAL_KEY); else localStorage.setItem(CAL_KEY, String(f)); } catch (e) { /* ignorieren */ }
+}
+export function calibrationCents() { return Math.round(1200 * Math.log2(calib)); }
+
 export function micActive() {
   return !!analyser;
 }
@@ -92,7 +105,7 @@ export function readPitch() {
   rms = Math.sqrt(rms / buf.length);
   if (rms < 0.002) return { freq: 0, clarity: 0, rms };
   const res = yin(buf, sr, 0.2);
-  return { freq: res.freq, clarity: res.clarity, rms };
+  return { freq: res.freq * getCalibration(), raw: res.freq, clarity: res.clarity, rms };
 }
 
 function yin(data, sampleRate, threshold) {

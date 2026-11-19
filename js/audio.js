@@ -21,6 +21,7 @@ export function setAudioSession(type) {
 }
 
 let sessionType = 'playback';
+let wantedRate = 0;
 
 export function getContext() {
   if (!ctx) {
@@ -28,7 +29,11 @@ export function getContext() {
     // Beim Singen wird auf "play-and-record" umgestellt (sonst sperrt iOS das Mikrofon).
     setAudioSession(sessionType);
     const AC = window.AudioContext || window.webkitAudioContext;
-    ctx = new AC({ latencyHint: 'interactive' });
+    try {
+      ctx = wantedRate ? new AC({ latencyHint: 'interactive', sampleRate: wantedRate }) : new AC({ latencyHint: 'interactive' });
+    } catch (e) {
+      ctx = new AC();
+    }
     master = ctx.createGain();
     master.gain.value = 1;
     const comp = ctx.createDynamicsCompressor();
@@ -41,8 +46,9 @@ export function getContext() {
 
 // Baut den AudioContext für eine neue Audio-Sitzung neu auf.
 // iOS lässt einen Context stumm, der vor dem Wechsel der Audio-Sitzung (z. B. Mikrofonstart) angelegt wurde.
-export async function rebuildContext(type) {
+export async function rebuildContext(type, rate = 0) {
   sessionType = type;
+  wantedRate = rate || 0;
   const old = ctx;
   ctx = null;
   master = null;
