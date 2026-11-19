@@ -6,6 +6,22 @@ let analyser = null;
 let source = null;
 let buf = null;
 let sink = null;
+let hp = null;
+let lp = null;
+let gate = 0.0006;
+let lpFreq = 1000;
+
+// Empfindlichkeit und Stimmlage einstellen (Filter gegen Rauschen und Obertöne)
+const GATES = { normal: 0.0015, hoch: 0.0006, sehrhoch: 0.0002 };
+const LP_BY_VOICE = { tief: 550, mittel: 850, hoch: 1250 };
+export function configure({ sensitivity, voice } = {}) {
+  if (sensitivity && GATES[sensitivity]) gate = GATES[sensitivity];
+  if (voice && LP_BY_VOICE[voice]) lpFreq = LP_BY_VOICE[voice];
+  if (lp) lp.frequency.value = lpFreq;
+}
+export function quietGate() {
+  return gate;
+}
 
 // Wirft einen Fehler mit verständlicher deutscher Meldung (err.userMessage)
 export async function startMic() {
@@ -39,7 +55,14 @@ export async function startMic() {
     analyser = ctx.createAnalyser();
     analyser.fftSize = 4096;
     analyser.smoothingTimeConstant = 0;
-    source.connect(analyser);
+    // Hochpass gegen Brummen, Tiefpass gegen Rauschen und hohe Obertöne: macht leise und tiefe Stimmen erkennbar
+    hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 55;
+    lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = lpFreq;
+    source.connect(hp).connect(lp).connect(analyser);
     // Manche Browser verarbeiten den Mikrofon-Graphen nur, wenn er bis zum Ausgang führt (stumm geschaltet)
     sink = ctx.createGain();
     sink.gain.value = 0;
@@ -72,6 +95,8 @@ export function stopMic() {
   analyser = null;
   source = null;
   sink = null;
+  hp = null;
+  lp = null;
   if (wasActive) rebuildContext('playback');
 }
 
@@ -103,8 +128,8 @@ export function readPitch() {
     rms += buf[i] * buf[i];
   }
   rms = Math.sqrt(rms / buf.length);
-  if (rms < 0.002) return { freq: 0, clarity: 0, rms };
-  const res = yin(buf, sr, 0.2);
+  if (rms < gate) return { freq: 0, clarity: 0, rms };
+  const res = yin(buf, sr, 0.3);
   return { freq: res.freq * getCalibration(), raw: res.freq, clarity: res.clarity, rms };
 }
 
@@ -112,7 +137,7 @@ function yin(data, sampleRate, threshold) {
   // Auf ca. 2048 Werte bei 48 kHz begrenzen, das genügt bis ~60 Hz und spart Rechenzeit
   const half = Math.min(Math.floor(data.length / 2), Math.round(sampleRate * 0.043));
   const minTau = Math.floor(sampleRate / 1200);
-  const maxTau = Math.min(half, Math.floor(sampleRate / 60));
+  const maxTau = Math.min(half, Math.floor(sampleRate / 55));
   const diff = new Float32Array(maxTau + 1);
   for (let tau = 1; tau <= maxTau; tau++) {
     let s = 0;

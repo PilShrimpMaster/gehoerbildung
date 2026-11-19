@@ -41,7 +41,7 @@ const NUM_NAMES = { 1: 'Prime', 2: 'Sekunde', 3: 'Terz', 4: 'Quarte', 5: 'Quinte
 const Q_ORDER = ['vermindert', 'klein', 'rein', 'groß', 'übermäßig'];
 
 export const VOICE_RANGES = {
-  tief: { lo: 43, hi: 64, label: 'Tief (Bass, Bariton)' },
+  tief: { lo: 40, hi: 62, label: 'Tief (Bass, Bariton)' },
   mittel: { lo: 48, hi: 69, label: 'Mittel (Tenor, Alt)' },
   hoch: { lo: 55, hi: 76, label: 'Hoch (Sopran, Mezzo)' },
 };

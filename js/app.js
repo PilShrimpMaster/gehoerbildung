@@ -3,7 +3,7 @@ import * as sync from './sync.js';
 import { MODULES, moduleById } from './modules/index.js';
 import { renderNotes } from './notation.js';
 import { unlock, blip, stopAll, preloadAll, playMelodic } from './audio.js';
-import { startMic, stopMic, readPitch, getCalibration, setCalibration, calibrationCents } from './pitch.js';
+import { startMic, stopMic, readPitch, getCalibration, setCalibration, calibrationCents, configure as configureMic, quietGate } from './pitch.js';
 import { midiOfFreq, weightedPick } from './theory.js';
 import { VOICE_RANGES } from './modules/intervals.js';
 
@@ -476,6 +476,8 @@ function renderSession(moduleId, mode, lessonId) {
     const $hint = $body.querySelector('#sing-hint');
     const $lvl = $body.querySelector('#lvl');
     let quietMs = 0;
+    const recent = [];
+    configureMic({ sensitivity: store.settings().micSens, voice: store.settings().voice });
     const targets = q.targets || [q.targetMidi];
     let ti = 0;
     const HOLD = targets.length > 1 ? 550 : 700;
@@ -502,11 +504,14 @@ function renderSession(moduleId, mode, lessonId) {
       last = now;
       const p = readPitch();
       if (p) $lvl.style.width = `${Math.min(100, Math.round(Math.sqrt(p.rms) * 220))}%`;
-      if (p && p.rms < 0.002) quietMs += dt; else quietMs = 0;
+      if (p && p.rms < quietGate()) quietMs += dt; else quietMs = 0;
       if (quietMs > 4000 && now > playingUntil) $hint.textContent = 'Ich höre nichts. Sing lauter oder prüfe, ob das richtige Mikrofon ausgewählt ist.';
       // Während der Grundton klingt, nicht auswerten (sonst "hört" das Mikrofon das Klavier)
-      if (p && p.freq > 0 && p.clarity > 0.6 && now > playingUntil) {
-        const sm = midiOfFreq(p.freq);
+      if (p && p.freq > 0 && p.clarity > 0.5 && now > playingUntil) {
+        // Glätten: Median der letzten drei Messungen (gegen einzelne Ausreißer)
+        recent.push(midiOfFreq(p.freq));
+        if (recent.length > 3) recent.shift();
+        const sm = recent.slice().sort((x, y) => x - y)[Math.floor(recent.length / 2)];
         const nearest = Math.round(sm);
         // Abweichung zum Zielton, Oktavlage egal
         let diff = (sm - targets[ti]) * 100;
@@ -523,7 +528,8 @@ function renderSession(moduleId, mode, lessonId) {
         else if (!inTune) $hint.textContent = folded < 0 ? 'Etwas zu tief.' : 'Etwas zu hoch.';
         else $hint.textContent = targets.length > 1 ? `Genau so, halten … (Ton ${ti + 1} von ${targets.length})` : 'Genau so, halten …';
       } else {
-        holdMs = Math.max(0, holdMs - dt);
+        holdMs = Math.max(0, holdMs - dt * 0.5);
+        if (recent.length && p && p.rms < quietGate()) recent.length = 0;
         $needle.classList.remove('good');
       }
       $hold.style.width = `${Math.min(100, (100 * holdMs) / HOLD)}%`;
@@ -676,6 +682,10 @@ function renderSettings() {
       <label>Stimmlage
         <div class="seg vertical" data-key="voice">${Object.entries(VOICE_RANGES).map(([k, v]) => `<button class="${st.voice === k ? 'on' : ''}" data-v="${k}">${v.label}</button>`).join('')}</div>
       </label>
+      <label>Mikrofon-Empfindlichkeit
+        <div class="seg" data-key="micSens">${[['normal', 'Normal'], ['hoch', 'Hoch'], ['sehrhoch', 'Sehr hoch']].map(([v, l]) => `<button class="${(st.micSens || 'hoch') === v ? 'on' : ''}" data-v="${v}">${l}</button>`).join('')}</div>
+      </label>
+      <p class="muted small">„Sehr hoch" hilft bei leisen oder tiefen Stimmen, reagiert aber auch eher auf Geräusche.</p>
       <label>Genauigkeit beim Singen
         <div class="seg" data-key="tolerance">${[[60, 'Locker'], [40, 'Normal'], [25, 'Streng']].map(([v, l]) => `<button class="${st.tolerance === v ? 'on' : ''}" data-v="${v}">${l}</button>`).join('')}</div>
       </label>
@@ -713,6 +723,7 @@ function renderSettings() {
       if (key === 'dailyGoal' || key === 'tolerance') v = Number(v);
       if (key === 'autoplay') v = v === 'true';
       store.setSetting(key, v);
+      configureMic({ sensitivity: store.settings().micSens, voice: store.settings().voice });
       seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
     }));
   });
@@ -720,6 +731,7 @@ function renderSettings() {
   $app.querySelector('#mic-test').addEventListener('click', async () => {
     const out = $app.querySelector('#mic-out');
     if (testing) { cancelAnimationFrame(testing); testing = null; stopMic(); out.textContent = ''; return; }
+    configureMic({ sensitivity: store.settings().micSens, voice: store.settings().voice });
     try {
       await unlock();
       await startMic();
@@ -730,7 +742,7 @@ function renderSettings() {
     const loop = () => {
       const p = readPitch();
       const lvl = p ? Math.min(100, Math.round(Math.sqrt(p.rms) * 220)) : 0;
-      if (p && p.freq > 0 && p.clarity > 0.6) {
+      if (p && p.freq > 0 && p.clarity > 0.5) {
         const mm = midiOfFreq(p.freq);
         const c = Math.round((mm - Math.round(mm)) * 100);
         out.textContent = `Pegel ${lvl} %. Erkannt: ${noteNameFromMidi(Math.round(mm))} (${Math.round(p.freq)} Hz, ${c > 0 ? '+' : ''}${c} Cent). Tippe erneut zum Beenden.`;

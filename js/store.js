@@ -9,7 +9,7 @@ const DEFAULT = {
   created: null,
   deviceId: null,
   deviceName: '',
-  settings: { voice: 'mittel', dailyGoal: 20, tolerance: 40, autoplay: true },
+  settings: { voice: 'mittel', dailyGoal: 20, tolerance: 40, autoplay: true, micSens: 'hoch' },
   settingsAt: 0, // Zeitpunkt der letzten Änderung der Einstellungen (für den Abgleich)
   resetAt: 0, // Zeitpunkt des letzten "Alles zurücksetzen" (gilt für alle Geräte)
   updatedAt: 0,
