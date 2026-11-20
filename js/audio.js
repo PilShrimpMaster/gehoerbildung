@@ -53,6 +53,9 @@ export async function rebuildContext(type, rate = 0) {
   ctx = null;
   master = null;
   active.clear();
+  buffers.clear();
+  loading.clear();
+  bufCtx = null;
   if (old) {
     try { await old.close(); } catch (e) { /* ignorieren */ }
   }
@@ -89,25 +92,46 @@ function nearestSample(midi) {
   return best;
 }
 
+// Die Rohdaten bleiben erhalten; dekodiert wird pro AudioContext neu.
+// (iOS spielt Puffer aus einem geschlossenen Context teils stumm ab, z. B. nach einer Nachsingen-Aufgabe.)
+const raw = new Map(); // midi -> Promise<ArrayBuffer>
+let bufCtx = null;
+
+function fetchRaw(s) {
+  if (!raw.has(s.midi)) {
+    const p = fetch(s.file).then((r) => {
+      if (!r.ok) throw new Error('Laden fehlgeschlagen');
+      return r.arrayBuffer();
+    });
+    p.catch(() => raw.delete(s.midi));
+    raw.set(s.midi, p);
+  }
+  return raw.get(s.midi);
+}
+
 async function loadSample(s) {
+  const c = getContext();
+  if (bufCtx !== c) {
+    buffers.clear();
+    loading.clear();
+    bufCtx = c;
+  }
   if (buffers.has(s.midi)) return buffers.get(s.midi);
   if (loading.has(s.midi)) return loading.get(s.midi);
   const p = (async () => {
-    const res = await fetch(s.file);
-    const data = await res.arrayBuffer();
-    const c = getContext();
+    const data = (await fetchRaw(s)).slice(0);
     const buf = await new Promise((resolve, reject) => {
       const r = c.decodeAudioData(data, resolve, reject);
       if (r && r.then) r.then(resolve, reject);
     });
-    buffers.set(s.midi, buf);
+    if (bufCtx === c) buffers.set(s.midi, buf);
     return buf;
   })();
   loading.set(s.midi, p);
   try {
     return await p;
   } finally {
-    loading.delete(s.midi);
+    if (loading.get(s.midi) === p) loading.delete(s.midi);
   }
 }
 
@@ -116,9 +140,10 @@ export async function preload(midis) {
   await Promise.all([...set].map((s) => loadSample(s).catch(() => null)));
 }
 
-// Alle Samples im Hintergrund laden (für Offline-Nutzung landen sie im Cache des Service Workers)
+// Alle Klänge im Hintergrund holen (für die Offline-Nutzung landen sie im Cache des Service Workers)
 export function preloadAll() {
-  return Promise.all(SAMPLE_NOTES.filter((s) => s.midi >= 36 && s.midi <= 96).map((s) => loadSample(s).catch(() => null)));
+  // Nur die Rohdaten holen (landen im Offline-Cache); dekodiert wird bei Bedarf
+  return Promise.all(SAMPLE_NOTES.filter((s) => s.midi >= 36 && s.midi <= 96).map((s) => fetchRaw(s).catch(() => null)));
 }
 
 export function stopAll() {
@@ -188,4 +213,30 @@ export function blip(ok) {
   o.connect(g).connect(c.destination);
   o.start(t);
   o.stop(t + 0.35);
+}
+
+// Für die Klaviatur: Ton anschlagen und beim Loslassen ausklingen lassen
+export async function noteOn(midi, vel = 0.85) {
+  const c = await ensureRunning();
+  const s = nearestSample(midi);
+  const buf = await loadSample(s);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.value = Math.pow(2, (midi - s.midi) / 12);
+  const g = c.createGain();
+  g.gain.setValueAtTime(vel, c.currentTime);
+  src.connect(g).connect(master);
+  src.start();
+  const voice = { src, gain: g };
+  active.add(voice);
+  src.onended = () => active.delete(voice);
+  return () => {
+    try {
+      const t = c.currentTime;
+      g.gain.cancelScheduledValues(t);
+      g.gain.setValueAtTime(g.gain.value, t);
+      g.gain.setTargetAtTime(0, t, 0.15);
+      src.stop(t + 1.2);
+    } catch (e) { /* ignorieren */ }
+  };
 }

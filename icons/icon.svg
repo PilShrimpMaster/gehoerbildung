@@ -1,9 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7a6cf0"/><stop offset="1" stop-color="#4a3bc9"/></linearGradient></defs>
   <rect width="512" height="512" rx="112" fill="url(#g)"/>
+  <!-- Ohr -->
   <g fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M206 360V150l170-34v196"/>
+    <path d="M110 214c0-72 54-124 120-124s120 52 120 124c0 56-30 80-52 104s-26 42-40 68-30 40-56 40-44-16-44-40"/>
+    <path d="M176 216c0-32 24-56 54-56s54 24 54 56c0 30-26 40-34 64"/>
   </g>
-  <circle cx="160" cy="360" r="54" fill="#fff"/>
-  <circle cx="330" cy="318" r="54" fill="#fff"/>
+  <!-- Note -->
+  <g fill="#ffd2b0">
+    <rect x="404" y="150" width="20" height="170" rx="10"/>
+    <path d="M414 150c20 8 46 22 46 58-12-18-26-26-46-28z"/>
+    <ellipse cx="386" cy="322" rx="40" ry="31" transform="rotate(-22 386 322)"/>
+  </g>
 </svg>
