@@ -46,7 +46,8 @@ export function getContext() {
 
 // Baut den AudioContext für eine neue Audio-Sitzung neu auf.
 // iOS lässt einen Context stumm, der vor dem Wechsel der Audio-Sitzung (z. B. Mikrofonstart) angelegt wurde.
-export async function rebuildContext(type, rate = 0) {
+// create=false: der neue Context entsteht erst beim nächsten Tippen (iOS erlaubt Ton nur nach einer Berührung).
+export async function rebuildContext(type, rate = 0, create = true) {
   sessionType = type;
   wantedRate = rate || 0;
   const old = ctx;
@@ -56,23 +57,35 @@ export async function rebuildContext(type, rate = 0) {
   buffers.clear();
   loading.clear();
   bufCtx = null;
-  if (old) {
-    try { await old.close(); } catch (e) { /* ignorieren */ }
-  }
+  if (old) old.close().catch(() => {});
+  if (!create) return null;
   const c = getContext();
-  if (c.state !== 'running') {
-    try { await c.resume(); } catch (e) { /* ignorieren */ }
-  }
+  if (c.state !== 'running') c.resume().catch(() => {});
   return c;
 }
 
-// Stellt sicher, dass Ton herauskommt; repariert einen hängenden oder unterbrochenen Context
+// Muss direkt in einem Tipp-/Klick-Ereignis laufen (ohne vorheriges await):
+// legt den Context bei Bedarf an, setzt ihn fort und spielt einen stillen Puffer (entsperrt iOS).
+export function primeAudio() {
+  try {
+    if (ctx && ctx.state === 'closed') { ctx = null; master = null; buffers.clear(); loading.clear(); bufCtx = null; }
+    const c = getContext();
+    if (c.state !== 'running') c.resume().catch(() => {});
+    const b = c.createBuffer(1, 1, 22050);
+    const src = c.createBufferSource();
+    src.buffer = b;
+    src.connect(c.destination);
+    src.start(0);
+  } catch (e) { /* ignorieren */ }
+}
+
 async function ensureRunning() {
-  let c = getContext();
+  if (ctx && ctx.state === 'closed') { ctx = null; master = null; }
+  const c = getContext();
   if (c.state !== 'running') {
-    try { await c.resume(); } catch (e) { /* ignorieren */ }
+    // Nicht neu anlegen: ein außerhalb einer Berührung angelegter Context bliebe auf iOS stumm
+    await Promise.race([c.resume().catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
   }
-  if (c.state !== 'running') c = await rebuildContext(sessionType);
   return c;
 }
 

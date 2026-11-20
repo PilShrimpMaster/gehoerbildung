@@ -97,7 +97,7 @@ export function stopMic() {
   sink = null;
   hp = null;
   lp = null;
-  if (wasActive) rebuildContext('playback');
+  if (wasActive) rebuildContext('playback', 0, false);
 }
 
 // ---------- Kalibrierung (pro Gerät) ----------

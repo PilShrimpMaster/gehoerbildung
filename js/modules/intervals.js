@@ -124,6 +124,21 @@ function makePair(iv, dir, lo, hi, accs, maxAcc = 1) {
 function answerSpec(lesson, iv, byEar) {
   const items = lesson.items.map((x) => IV_BY_ID[x]);
   const accept = (cand) => cand && (byEar ? cand.semis === iv.semis : cand.id === iv.id);
+  if (byEar) {
+    // Beim Hören: gleich klingende Intervalle teilen sich einen Knopf (z. B. übermäßige Prime / kleine Sekunde)
+    const groups = new Map();
+    for (const x of items) {
+      if (!groups.has(x.semis)) groups.set(x.semis, []);
+      groups.get(x.semis).push(x);
+    }
+    const order = [...groups.keys()].sort((a, b) => a - b);
+    return {
+      type: 'choice',
+      options: order.map((st) => ({ id: `s${st}`, label: groups.get(st).map((x) => x.name).join(' / ') })),
+      answer: `s${iv.semis}`,
+      accept: (id) => id === `s${iv.semis}`,
+    };
+  }
   if (items.length <= 9) {
     return {
       type: 'choice',
@@ -169,12 +184,12 @@ function makeHear(lesson, pickItem) {
     reveal: {
       groups: harmonic ? [[root, other]] : [[root], [other]],
       text: `${nameDe(root)} – ${nameDe(other)}: ${iv.name} ${harmonic ? 'zusammen' : dirLabel(dir)}`,
-      note: twins.length ? `Klingt genauso wie: ${twins.map((x) => x.name).join(', ')}. Beim Hören zählt beides als richtig.` : '',
+      note: twins.length ? `Klingt genauso wie: ${twins.map((x) => x.name).join(', ')}.` : '',
     },
     compare: (optId) => {
-      const o = IV_BY_ID[optId];
-      if (!o) return null;
-      const m2 = dir === 'down' ? a - o.semis : a + o.semis;
+      const semis = optId && optId[0] === 's' ? Number(optId.slice(1)) : IV_BY_ID[optId]?.semis;
+      if (semis === undefined || Number.isNaN(semis)) return null;
+      const m2 = dir === 'down' ? a - semis : a + semis;
       return harmonic ? playHarmonic([a, m2]) : playMelodic([a, m2]);
     },
   };
@@ -185,7 +200,8 @@ function makeRead(lesson, pickItem) {
   const dir = pick(lesson.dirs);
   const clef = pick(lesson.clefs || ['treble']);
   const range = clef === 'bass' ? [40, 64] : [57, 84];
-  const { root, other } = makePair(iv, dir, range[0], range[1], lesson.accs, 2);
+  // Auch der erste Ton darf Vorzeichen haben (von Anfang an)
+  const { root, other } = makePair(iv, dir, range[0], range[1], [0, 0, 1, -1], 2);
   const harmonic = Math.random() < (lesson.harmonic || 0);
   const groups = harmonic ? [[root, other]] : [[root], [other]];
   const a = midiOf(root), b = midiOf(other);

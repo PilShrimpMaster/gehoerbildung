@@ -1,5 +1,5 @@
 // Service Worker: speichert die App für die Offline-Nutzung.
-const VERSION = 'gbt-v1.4.0';
+const VERSION = 'gbt-v1.4.1';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/store.js', 'js/sync.js', 'js/piano.js', 'js/theory.js', 'js/audio.js', 'js/pitch.js', 'js/notation.js',
@@ -12,9 +12,9 @@ const SAMPLES = ['A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4',
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(VERSION);
-    await c.addAll(CORE);
+    await c.addAll(CORE.map((u) => new Request(u, { cache: 'reload' })));
     // Klänge einzeln, damit ein Fehler nicht die ganze Installation abbricht
-    await Promise.all(SAMPLES.map((u) => c.add(u).catch(() => null)));
+    await Promise.all(SAMPLES.map((u) => c.match(u).then((hit) => hit || c.add(u)).catch(() => null)));
     self.skipWaiting();
   })());
 });

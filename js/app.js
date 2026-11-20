@@ -3,7 +3,7 @@ import * as sync from './sync.js';
 import { renderPiano } from './piano.js';
 import { MODULES, moduleById } from './modules/index.js';
 import { renderNotes } from './notation.js';
-import { unlock, blip, stopAll, preloadAll, playMelodic } from './audio.js';
+import { unlock, blip, stopAll, preloadAll, playMelodic, primeAudio } from './audio.js';
 import { startMic, stopMic, readPitch, getCalibration, setCalibration, calibrationCents, configure as configureMic, quietGate } from './pitch.js';
 import { midiOfFreq, weightedPick } from './theory.js';
 import { VOICE_RANGES } from './modules/intervals.js';
@@ -917,8 +917,20 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// Jede Berührung hält die Tonausgabe am Leben (iOS spielt nur nach einer Berührung Ton ab)
+for (const t of ['touchend', 'click', 'keydown']) document.addEventListener(t, primeAudio, { capture: true, passive: true });
+
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {});
+  // Neue Version: sofort neu laden, außer mitten in einer Runde
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    if (location.hash.startsWith('#/runde')) window.addEventListener('hashchange', () => location.reload(), { once: true });
+    else location.reload();
+  });
 }
 // Klänge nach dem ersten Tippen im Hintergrund laden, damit sie auch offline da sind
 window.addEventListener('pointerdown', () => { setTimeout(preloadAll, 1500); }, { once: true });
