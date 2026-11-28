@@ -195,3 +195,64 @@ export function randomNote({ accs = [0], lo = 55, hi = 72 } = {}) {
 export function isReasonableSpelling(n) {
   return Math.abs(n.a) <= (n.a < 0 ? 2 : 2);
 }
+
+// ---------- Tonarten ----------
+export const MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11];
+export const MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10];
+
+// Tonika (Oktave 4) und Anzahl der Vorzeichen
+export const MAJOR_KEYS = [
+  { l: 0, a: 0, sig: 0 }, { l: 4, a: 0, sig: 1 }, { l: 3, a: 0, sig: 1 }, { l: 1, a: 0, sig: 2 }, { l: 6, a: -1, sig: 2 },
+  { l: 5, a: 0, sig: 3 }, { l: 2, a: -1, sig: 3 }, { l: 2, a: 0, sig: 4 }, { l: 5, a: -1, sig: 4 }, { l: 6, a: 0, sig: 5 }, { l: 1, a: -1, sig: 5 },
+];
+export const MINOR_KEYS = [
+  { l: 5, a: 0, sig: 0 }, { l: 2, a: 0, sig: 1 }, { l: 1, a: 0, sig: 1 }, { l: 6, a: 0, sig: 2 }, { l: 4, a: 0, sig: 2 },
+  { l: 3, a: 1, sig: 3 }, { l: 0, a: 0, sig: 3 }, { l: 0, a: 1, sig: 4 }, { l: 3, a: 0, sig: 4 }, { l: 4, a: 1, sig: 5 }, { l: 5, a: -1, sig: 5 },
+];
+
+export function randomKey(minor, maxSig = 2) {
+  const k = pick((minor ? MINOR_KEYS : MAJOR_KEYS).filter((x) => x.sig <= maxSig));
+  return { tonic: { l: k.l, a: k.a, o: 4 }, minor };
+}
+
+export function keyName(key) {
+  const n = nameDe(key.tonic);
+  return key.minor ? `${n.toLowerCase()}-Moll` : `${n}-Dur`;
+}
+
+export function scaleOf(key) {
+  return (key.minor ? MINOR_STEPS : MAJOR_STEPS).map((s, i) => buildInterval(key.tonic, i + 1, s));
+}
+
+// Note mit Stammton und Vorzeichen wie n, aber in der Oktave, die genau midi ergibt
+export function atMidi(n, midi) {
+  const out = { l: n.l, a: n.a, o: n.o };
+  out.o += Math.round((midi - midiOf(out)) / 12);
+  return out;
+}
+
+// Schreibweise eines MIDI-Tons passend zur Tonart: leitereigene Töne wie in der Tonleiter,
+// sonst die übliche Alteration (Dur: #1, b3, #4, b6, b7; Moll: b2, #3, #4, #6, #7).
+const CHROM_MAJ = { 1: [0, 1], 3: [2, -1], 6: [3, 1], 8: [5, -1], 10: [6, -1] };
+const CHROM_MIN = { 1: [1, -1], 4: [2, 1], 6: [3, 1], 9: [5, 1], 11: [6, 1] };
+export function spellInKey(midi, key) {
+  const sc = scaleOf(key);
+  const rel = (((midi - midiOf(key.tonic)) % 12) + 12) % 12;
+  const steps = key.minor ? MINOR_STEPS : MAJOR_STEPS;
+  const d = steps.indexOf(rel);
+  let n;
+  if (d >= 0) n = sc[d];
+  else {
+    const [deg, alt] = (key.minor ? CHROM_MIN : CHROM_MAJ)[rel];
+    n = { ...sc[deg], a: sc[deg].a + alt };
+    // Doppelvorzeichen vermeiden, wenn es eine einfachere Schreibweise gibt
+    if (Math.abs(n.a) > 1) {
+      const other = (key.minor ? CHROM_MAJ : CHROM_MIN)[rel];
+      if (other) {
+        const m = { ...sc[other[0]], a: sc[other[0]].a + other[1] };
+        if (Math.abs(m.a) < Math.abs(n.a)) n = m;
+      }
+    }
+  }
+  return atMidi(n, midi);
+}
