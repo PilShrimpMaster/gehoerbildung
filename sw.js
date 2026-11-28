@@ -1,9 +1,10 @@
 // Service Worker: speichert die App für die Offline-Nutzung.
-const VERSION = 'gbt-v1.4.1';
+const VERSION = 'gbt-v1.5.0';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/store.js', 'js/sync.js', 'js/piano.js', 'js/theory.js', 'js/audio.js', 'js/pitch.js', 'js/notation.js',
   'js/modules/index.js', 'js/modules/intervals.js', 'js/modules/chords.js', 'js/modules/scales.js',
+  'js/modules/cadences.js', 'js/modules/melody.js', 'js/keyboard.js',
   'vendor/vexflow.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
 ];
 const SAMPLES = ['A1', 'C2', 'Ds2', 'Fs2', 'A2', 'C3', 'Ds3', 'Fs3', 'A3', 'C4', 'Ds4', 'Fs4', 'A4', 'C5', 'Ds5', 'Fs5', 'A5', 'C6', 'Ds6', 'Fs6', 'A6', 'C7']

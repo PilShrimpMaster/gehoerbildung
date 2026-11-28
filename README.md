@@ -1,6 +1,6 @@
 # Gehörbildungstrainer
 
-Web-App zum Trainieren von Intervallen, Akkorden und Tonleitern (hören, in Noten lesen, nachsingen). Läuft im Browser auf iPad und Handy, auch offline, und lässt sich zum Home-Bildschirm hinzufügen.
+Web-App zum Trainieren von Intervallen, Akkorden, Tonleitern, Kadenzen und Melodiediktaten (hören, in Noten lesen, nachsingen). Läuft im Browser auf iPad und Handy, auch offline, und lässt sich zum Home-Bildschirm hinzufügen.
 
 Keine Build-Schritte: alle Dateien werden direkt ausgeliefert (GitHub Pages).
 

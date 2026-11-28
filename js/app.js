@@ -3,6 +3,7 @@ import * as sync from './sync.js';
 import { renderPiano } from './piano.js';
 import { MODULES, moduleById } from './modules/index.js';
 import { renderNotes } from './notation.js';
+import { createKeyboard } from './keyboard.js';
 import { unlock, blip, stopAll, preloadAll, playMelodic, primeAudio } from './audio.js';
 import { startMic, stopMic, readPitch, getCalibration, setCalibration, calibrationCents, configure as configureMic, quietGate } from './pitch.js';
 import { midiOfFreq, weightedPick } from './theory.js';
@@ -274,8 +275,10 @@ function renderSession(moduleId, mode, lessonId) {
   let q = null;
   let alive = true;
   let singLoop = null;
+  let curKb = null;
   cleanup = () => {
     alive = false;
+    if (curKb) curKb.destroy();
     if (singLoop) cancelAnimationFrame(singLoop);
     stopMic();
   };
@@ -310,12 +313,12 @@ function renderSession(moduleId, mode, lessonId) {
     </div>
     ${introCards.length ? h`<section class="intro">
       <div class="sec-head"><h2>Neu in dieser Lektion</h2><span class="muted small">Tippe zum Anhören</span></div>
-      <div class="intro-list">${introCards.map((c, i) => `<button class="intro-card card ${c.groups.length > 3 ? 'col' : ''}" data-i="${i}"><div class="staff"></div><div class="ic-text"><b>${esc(c.title)}</b><span>${esc(c.text)}</span></div>${icon('play', 'ic-play')}</button>`).join('')}</div>
+      <div class="intro-list">${introCards.map((c, i) => `<button class="intro-card card ${c.groups.length > 3 || (c.grand && c.groups.length > 1) ? 'col' : ''}" data-i="${i}"><div class="staff"></div><div class="ic-text"><b>${esc(c.title)}</b><span>${esc(c.text)}</span></div>${icon('play', 'ic-play')}</button>`).join('')}</div>
     </section>` : ''}`;
   $body.querySelectorAll('.intro-card').forEach((el) => {
     const c = introCards[Number(el.dataset.i)];
     const st = el.querySelector('.staff');
-    renderNotes(st, c.groups, { duration: c.duration, width: Math.min(st.clientWidth || 260, c.groups.length > 3 ? 420 : 260), height: 110 });
+    renderNotes(st, c.groups, { duration: c.duration, grand: c.grand, width: Math.min(st.clientWidth || 260, c.groups.length > 3 ? 420 : 260), height: c.grand ? 200 : 110 });
     el.addEventListener('click', async () => { await unlock(); c.play(); });
   });
   $body.querySelector('#go').addEventListener('click', async () => {
@@ -340,10 +343,12 @@ function renderSession(moduleId, mode, lessonId) {
 
   function next() {
     if (!alive) return;
+    if (curKb) { curKb.destroy(); curKb = null; }
     if (idx >= SESSION_LEN) return finish();
     q = m.makeQuestion(mode, lesson, pickItem, { settings: store.settings() });
     $prog.style.width = `${(100 * idx) / SESSION_LEN}%`;
     if (q.type === 'sing') return showSing();
+    if (q.type === 'dictation') return showDictation();
     showQuestion();
   }
 
@@ -362,7 +367,7 @@ function renderSession(moduleId, mode, lessonId) {
         <h2 class="q-prompt">${esc(q.prompt)}</h2>
         <p class="q-sub muted">${esc(q.sub || '')}</p>
         ${q.notation ? '<div class="staff"></div>' : ''}
-        ${q.notation && mode !== 'sing' ? '' : `<button class="btn play" id="play">${icon('play')} <span>${mode === 'sing' ? 'Grundton hören' : 'Abspielen'}</span></button>`}
+        ${q.notation && mode !== 'sing' && !q.showPlay ? '' : `<div class="play-row"><button class="btn play" id="play">${icon('play')} <span>${mode === 'sing' ? esc(q.playLabel || 'Grundton hören') : 'Abspielen'}</span></button>${q.playTonic ? `<button class="btn ghost" id="tonic">Tonika</button>` : ''}</div>`}
         ${extra}
       </div>
       <div class="answers"></div>
@@ -372,11 +377,13 @@ function renderSession(moduleId, mode, lessonId) {
   function drawStaff(groups, clef, colors) {
     const el = $body.querySelector('.staff');
     const wide = q.notation && q.notation.wide;
-    if (el) renderNotes(el, groups, { clef, colors, duration: q.notation && q.notation.duration, width: Math.min(el.clientWidth || 320, wide ? 640 : 420), height: 125 });
+    const grand = q.notation && q.notation.grand;
+    if (el) renderNotes(el, groups, { clef, colors, grand, duration: q.notation && q.notation.duration, width: Math.min(el.clientWidth || 320, wide ? 640 : 420), height: grand ? 230 : 125 });
   }
-  function drawReveal(el) {
-    const many = q.reveal.groups.length > 3;
-    renderNotes(el, q.reveal.groups, { duration: q.reveal.duration, width: Math.min(el.clientWidth || 300, many ? 640 : 380), height: 130 });
+  function drawReveal(el, groups = q.reveal.groups, colors = q.reveal.colors) {
+    const many = groups.length > 3;
+    const grand = q.reveal.grand;
+    renderNotes(el, groups, { colors, grand, clef: q.reveal.clef, duration: q.reveal.duration, width: Math.min(el.clientWidth || 300, many ? 640 : 380), height: grand ? 230 : 130 });
   }
 
   function showQuestion() {
@@ -386,6 +393,7 @@ function renderSession(moduleId, mode, lessonId) {
     const $play = $body.querySelector('#play');
     if ($play) $play.addEventListener('click', () => q.play());
     const $ans = $body.querySelector('.answers');
+    if (q.type === 'sequence') showSequence($ans);
     if (q.type === 'choice') {
       $ans.className = `answers grid ${q.options.length > 9 ? 'dense' : ''}`;
       $ans.innerHTML = q.options.map((o) => `<button class="ans" data-id="${esc(o.id)}">${esc(o.label)}</button>`).join('');
@@ -429,6 +437,106 @@ function renderSession(moduleId, mode, lessonId) {
     if (q.autoplay && store.settings().autoplay) setTimeout(() => alive && q.play(), 250);
   }
 
+  // Folge von Antworten, z. B. die Funktionen einer Kadenz: Feld antippen, dann Baustein wählen
+  function showSequence($ans) {
+    const sel = Array(q.slots).fill(null);
+    let cur = 0;
+    $ans.className = 'answers seq';
+    $ans.innerHTML = h`
+      <div class="slots">${(q.given || []).map((g) => `<span class="slot given">${esc(g)}</span>`).join('')}${sel.map((_, i) => `<button class="slot" data-i="${i}"></button>`).join('')}</div>
+      <div class="palette">${q.options.map((o) => `<button class="ans pal" data-id="${esc(o.id)}"><b>${esc(o.label)}</b>${o.sub ? `<small>${esc(o.sub)}</small>` : ''}</button>`).join('')}</div>
+      <div class="row-btns"><button class="btn ghost" id="undo">Löschen</button><button class="btn primary" id="check" disabled>Prüfen</button></div>`;
+    const $slots = [...$ans.querySelectorAll('.slot:not(.given)')];
+    const labelOf = (id) => q.options.find((o) => o.id === id)?.label || '';
+    const draw = () => {
+      $slots.forEach((el, i) => {
+        el.textContent = sel[i] ? labelOf(sel[i]) : '?';
+        el.classList.toggle('empty', !sel[i]);
+        el.classList.toggle('cur', i === cur);
+      });
+      $ans.querySelector('#check').disabled = sel.some((x) => !x);
+    };
+    $slots.forEach((el, i) => el.addEventListener('click', () => { cur = i; draw(); }));
+    $ans.querySelectorAll('.pal').forEach((b) => b.addEventListener('click', () => {
+      if (cur >= q.slots) cur = q.slots - 1;
+      sel[cur] = b.dataset.id;
+      const nextEmpty = sel.findIndex((x, i) => !x && i > cur);
+      cur = nextEmpty >= 0 ? nextEmpty : sel.findIndex((x) => !x) >= 0 ? sel.findIndex((x) => !x) : cur;
+      draw();
+    }));
+    $ans.querySelector('#undo').addEventListener('click', () => {
+      if (sel[cur]) sel[cur] = null;
+      else {
+        const last = sel.map((x, i) => (x ? i : -1)).filter((i) => i >= 0).pop();
+        if (last !== undefined) { sel[last] = null; cur = last; }
+      }
+      draw();
+    });
+    $ans.querySelector('#check').addEventListener('click', () => {
+      const ok = sel.every((x, i) => x === q.answer[i]);
+      $ans.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      $slots.forEach((el, i) => {
+        el.classList.remove('cur');
+        if (sel[i] === q.answer[i]) el.classList.add('right');
+        else { el.classList.add('wrong'); el.innerHTML = `<s>${esc(labelOf(sel[i]))}</s> ${esc(labelOf(q.answer[i]))}`; }
+      });
+      answered(ok);
+      showFeedback(ok, null, ok ? null : q.labelFor(sel));
+    });
+    draw();
+  }
+
+  // Melodiediktat: Töne auf der Klaviatur eingeben, Notenbild wächst mit
+  function showDictation() {
+    $body.innerHTML = questionShell('<p class="muted small dict-count"></p>');
+    const $staff = $body.querySelector('.staff');
+    $staff.classList.add('wide');
+    const given = q.targets.slice(0, q.given || 0);
+    const entered = [];
+    const $count = $body.querySelector('.dict-count');
+    const draw = (colors) => {
+      const ms = [...given, ...entered];
+      renderNotes($staff, ms.map((m, i) => [i < given.length ? q.notes[i] : q.spell(m)]), { clef: q.clef, duration: 'q', colors, width: Math.min($staff.clientWidth || 320, 640), height: 125 });
+      $count.textContent = `${ms.length} von ${q.targets.length} Tönen`;
+      $check.disabled = ms.length !== q.targets.length;
+      $undo.disabled = !entered.length;
+    };
+    const $ans = $body.querySelector('.answers');
+    $ans.className = 'answers dict';
+    $ans.innerHTML = '<div class="kb"></div><div class="row-btns"><button class="btn ghost" id="undo">Löschen</button><button class="btn primary" id="check" disabled>Prüfen</button></div>';
+    const $check = $ans.querySelector('#check');
+    const $undo = $ans.querySelector('#undo');
+    let done = false;
+    const kb = createKeyboard($ans.querySelector('.kb'), {
+      lo: q.keyboard[0], hi: q.keyboard[1],
+      onNote: (m) => {
+        if (done || given.length + entered.length >= q.targets.length) return;
+        entered.push(m);
+        draw();
+      },
+    });
+    curKb = kb;
+    $undo.addEventListener('click', () => { entered.pop(); draw(); });
+    $body.querySelector('#play').addEventListener('click', () => q.play());
+    $body.querySelector('#tonic')?.addEventListener('click', () => q.playTonic());
+    $check.addEventListener('click', () => {
+      done = true;
+      const ms = [...given, ...entered];
+      const right = ms.map((m, i) => m === q.targets[i]);
+      const ok = right.every(Boolean);
+      const ok2 = getComputedStyle(document.documentElement);
+      const cOk = ok2.getPropertyValue('--ok').trim(), cBad = ok2.getPropertyValue('--bad').trim();
+      draw(right.map((r, i) => (i < given.length ? null : r ? cOk : cBad)));
+      $ans.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      $ans.querySelector('.kb').classList.add('off');
+      answered(ok);
+      const nRight = right.slice(given.length).filter(Boolean).length;
+      showFeedback(ok, null, ok ? null : `${nRight} von ${q.targets.length - given.length} Tönen richtig`);
+    });
+    draw();
+    if (store.settings().autoplay) setTimeout(() => alive && (q.playFull || q.play)(), 250);
+  }
+
   function showFeedback(ok, wrongId, wrongLabel) {
     const $fb = $body.querySelector('.feedback');
     $fb.hidden = false;
@@ -436,16 +544,18 @@ function renderSession(moduleId, mode, lessonId) {
     const yourLabel = wrongLabel || (wrongId && q.options ? q.options.find((o) => o.id === wrongId)?.label : null);
     $fb.innerHTML = h`
       <div class="fb-head">${ok ? icon('check') : icon('close')}<div><strong>${ok ? pickPraise() : 'Nicht ganz.'}</strong><p>${esc(q.reveal.text)}</p>${yourLabel ? `<p class="muted small">Deine Antwort: ${esc(yourLabel)}</p>` : ''}${q.reveal.note ? `<p class="muted small">${esc(q.reveal.note)}</p>` : ''}</div></div>
-      ${mode === 'hear' ? '<div class="staff reveal-staff"></div>' : ''}
+      ${mode === 'hear' || q.reveal.show ? '<div class="staff reveal-staff"></div>' : ''}
       <div class="fb-actions">
         <button class="btn ghost" id="again">${icon('replay')} Nochmal hören</button>
+        ${q.reveal.alt ? `<button class="btn ghost" id="alt">${icon('note')} ${esc(q.reveal.alt.label)}</button>` : ''}
         ${!ok && q.compare && wrongId ? `<button class="btn ghost" id="cmp">${icon('ear')} Deine Antwort hören</button>` : ''}
         <button class="btn primary" id="next">Weiter ${icon('chevron')}</button>
       </div>`;
-    if (mode === 'hear') {
+    if (mode === 'hear' || q.reveal.show) {
       const el = $fb.querySelector('.reveal-staff');
       drawReveal(el);
     }
+    $fb.querySelector('#alt')?.addEventListener('click', () => q.reveal.alt.play());
     if (q.reveal.playOnReveal && !ok) q.play();
     $fb.querySelector('#again').addEventListener('click', () => q.play());
     $fb.querySelector('#cmp')?.addEventListener('click', () => q.compare(wrongId));
@@ -656,7 +766,7 @@ function renderStats() {
       box.innerHTML = rows.map((r) => {
         const acc = pct(r.s.recent.reduce((a, b) => a + b, 0), r.s.recent.length);
         return `<div class="srow"><span>${esc(m.itemLabel(r.id))}</span><div class="bar small ${acc < 60 ? 'warn' : ''}"><div style="width:${acc}%"></div></div><b>${acc} %</b></div>`;
-      }).join('') + '<p class="muted small">Prozent der letzten 20 Antworten je Intervall.</p>';
+      }).join('') + '<p class="muted small">Prozent der letzten 20 Antworten je Eintrag.</p>';
     };
     seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
       seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
